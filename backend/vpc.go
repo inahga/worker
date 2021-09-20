@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	mathrand "math/rand"
+	"net/http"
 	"strconv"
 	"strings"
 	"text/template"
@@ -393,7 +394,7 @@ func (p *vpcProvider) retryDeleteSSHKey(ctx goctx.Context, key *vpcv1.Key) error
 		"self": "backend/vpc", "key": key.Name,
 	})
 	return retryDo(ctx, p.apiRetries, p.apiRetryInterval, func(attempt int) bool {
-		logger.Info("cleaning up SSH key, attempt %d of %d", attempt, p.apiRetries)
+		logger.Infof("cleaning up SSH key, attempt %d of %d", attempt, p.apiRetries)
 		if _, err := p.service.DeleteKeyWithContext(ctx, &vpcv1.DeleteKeyOptions{ID: key.ID}); err != nil {
 			logger.WithError(err).Debug("cleanup SSH key attempt failed")
 			return true
@@ -432,8 +433,35 @@ func (i *vpcInstance) DownloadTrace(ctx goctx.Context) ([]byte, error) {
 }
 
 func (i *vpcInstance) Stop(ctx goctx.Context) error {
-	// TODO
-	return nil
+	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
+		"self": "backend/vpc", "instance": i.instance.Name,
+	})
+	logger.Info("cleaning up instance")
+	if _, err := i.provider.service.DeleteInstanceWithContext(ctx, &vpcv1.DeleteInstanceOptions{ID: i.instance.ID}); err != nil {
+		return fmt.Errorf("failed to cleanup instance: %w", err)
+	}
+	logger.Debug("cleaned up instance")
+
+	if err := i.waitForInstanceDeleted(ctx); err != nil {
+		return err
+	}
+	return i.provider.retryDeleteSSHKey(ctx, i.sshKey)
+}
+
+func (i *vpcInstance) waitForInstanceDeleted(ctx goctx.Context) error {
+	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
+		"self": "backend/vpc", "instance": i.instance.Name,
+	})
+	return retryDo(ctx, i.provider.apiRetries, i.provider.apiRetryInterval, func(attempt int) bool {
+		logger.Infof("probing instance for deletion, attempt %d of %d", attempt, i.provider.apiRetries)
+		instance, res, err := i.provider.service.GetInstanceWithContext(ctx, &vpcv1.GetInstanceOptions{ID: i.instance.ID})
+		if res.StatusCode != http.StatusNotFound {
+			logger.WithError(err).Debugf("instance still running, state: %s", *instance.Status)
+			return true
+		}
+		logger.Info("instance is deleted")
+		return false
+	})
 }
 
 func (i *vpcInstance) StartupDuration() time.Duration {
@@ -459,6 +487,8 @@ func (i *vpcInstance) SupportsProgress() bool {
 	return false
 }
 
+// retryDo is a general purpose retry function. The given function should return
+// true if retryDo should try again, false if it should end.
 func retryDo(ctx goctx.Context, retries int, retryInterval time.Duration, fn func(attempt int) bool) error {
 	for i := 1; i <= retries; i++ {
 		select {
