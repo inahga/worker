@@ -211,6 +211,7 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 			logger.Info("cleaning up SSH key due to instance creation failure")
 			if _, err := p.service.DeleteKeyWithContext(ctx, &vpcv1.DeleteKeyOptions{ID: key.ID}); err != nil {
 				logger.WithError(err).Error("failed to cleanup SSH Key")
+				return
 			}
 			logger.Debug("cleaned up SSH key")
 		}
@@ -226,6 +227,7 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 			logger.Info("cleaning up instance due to failure")
 			if _, err := p.service.DeleteInstanceWithContext(ctx, &vpcv1.DeleteInstanceOptions{ID: instance.ID}); err != nil {
 				logger.WithError(err).Error("failed to cleanup instance")
+				return
 			}
 			logger.Debug("cleaned up instance")
 
