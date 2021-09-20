@@ -29,9 +29,9 @@ const (
 	defaultVPCRegion           = "us-south"
 	defaultVPCInstanceUsername = "travis"
 
-	defaultVPCAPIRetries       = 120
+	defaultVPCAPIRetries       = 60
 	defaultVPCAPIRetryInterval = time.Second * 5
-	defaultVPCSSHRetries       = 120
+	defaultVPCSSHRetries       = 60
 	defaultVPCSSHRetryInterval = time.Second * 2
 )
 
