@@ -207,13 +207,9 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 	}
 	defer func() {
 		if retErr != nil {
-			logger := logger.WithField("key", key.Name)
-			logger.Info("cleaning up SSH key due to instance creation failure")
-			if _, err := p.service.DeleteKeyWithContext(ctx, &vpcv1.DeleteKeyOptions{ID: key.ID}); err != nil {
-				logger.WithError(err).Error("failed to cleanup SSH Key")
-				return
+			if err := p.retryDeleteSSHKey(ctx, key); err != nil {
+				logger.WithError(err).Error("failed to delete SSH key")
 			}
-			logger.Debug("cleaned up SSH key")
 		}
 	}()
 
@@ -230,11 +226,6 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 				return
 			}
 			logger.Debug("cleaned up instance")
-
-			// Hack: the next deferred call to delete the SSH key will fail if we attempt
-			// to delete it too soon after deleting the instance. TODO: poll for instance
-			// deletion before attempting to delete SSH key.
-			<-time.After(time.Second * 5)
 		}
 	}()
 
@@ -390,7 +381,7 @@ func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Inst
 		logger.Debugf("probing instance for connectivity, attempt %d of %d", attempt, p.sshRetries)
 		conn, err := sshDialer.Dial(fmt.Sprintf("%s:22", ip), p.username, time.Second)
 		if err != nil {
-			logger.WithError(err).Debugf("attempt failed")
+			logger.WithError(err).Debug("SSH attempt failed")
 			return true
 		}
 		if err := conn.Close(); err != nil {
@@ -402,7 +393,18 @@ func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Inst
 }
 
 func (p *vpcProvider) retryDeleteSSHKey(ctx goctx.Context, key *vpcv1.Key) error {
-	return nil
+	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
+		"self": "backend/vpc", "key": key.Name,
+	})
+	return retryDo(ctx, p.apiRetries, p.apiRetryInterval, func(attempt int) bool {
+		logger.Info("cleaning up SSH key, attempt %d of %d", attempt, p.apiRetries)
+		if _, err := p.service.DeleteKeyWithContext(ctx, &vpcv1.DeleteKeyOptions{ID: key.ID}); err != nil {
+			logger.WithError(err).Debug("cleanup SSH key attempt failed")
+			return true
+		}
+		logger.Debug("cleaned up SSH key")
+		return false
+	})
 }
 
 func (p *vpcProvider) StartWithProgress(ctx goctx.Context, startAttributes *StartAttributes, _ Progresser) (Instance, error) {
