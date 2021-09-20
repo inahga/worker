@@ -245,7 +245,6 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 
 func (p *vpcProvider) createSSHKey(ctx goctx.Context) (*vpcv1.Key, *ssh.AuthDialer, error) {
 	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
-	hostname := hostnameFromContext(ctx)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
@@ -261,7 +260,6 @@ func (p *vpcProvider) createSSHKey(ctx goctx.Context) (*vpcv1.Key, *ssh.AuthDial
 	}
 
 	sshKeyOptions := &vpcv1.CreateKeyOptions{
-		Name:          &hostname,
 		ResourceGroup: &vpcv1.ResourceGroupIdentityByID{ID: &p.resourceGroupID},
 	}
 	sshKeyOptions.SetPublicKey(string(publicKey))
@@ -293,7 +291,6 @@ func (p *vpcProvider) createInstance(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.
 
 func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.InstancePrototypeInstanceByImage, error) {
 	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
-	hostname := hostnameFromContext(ctx)
 
 	// Choose random subnet to balance VMs. Ideally multiple subnets are given that
 	// are spread out across availability zones.
@@ -322,7 +319,6 @@ func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
 		Keys:          []vpcv1.KeyIdentityIntf{&vpcv1.KeyIdentityByID{ID: key.ID}},
 		Profile:       &vpcv1.InstanceProfileIdentityByName{Name: &p.instanceProfile},
-		Name:          &hostname,
 		ResourceGroup: &vpcv1.ResourceGroupIdentityByID{ID: &p.resourceGroupID},
 		UserData:      &userData,
 		VPC:           &vpcv1.VPCIdentityByID{ID: &p.vpcID},
