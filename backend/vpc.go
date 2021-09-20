@@ -365,49 +365,42 @@ func (p *vpcProvider) waitForInstance(ctx goctx.Context, instance *vpcv1.Instanc
 		ret *vpcv1.Instance
 		err error
 	)
-	for i := 1; i <= p.apiRetries; i++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(p.apiRetryInterval):
-			logger.Debugf("probing instance for readiness, attempt %d of %d", i, p.apiRetries)
-			ret, _, err = p.service.GetInstanceWithContext(ctx, &vpcv1.GetInstanceOptions{ID: instance.ID})
-			if err != nil || *ret.Status != "running" {
-				logger.WithError(err).Debugf("readiness attempt failed, state: %s", *ret.Status)
-				continue
-			}
-
-			logger.Info("instance is running")
-			return ret, p.waitForInstanceSSH(ctx, instance, *ret.PrimaryNetworkInterface.PrimaryIpv4Address, sshDialer)
+	if err := retryDo(ctx, p.apiRetries, p.sshRetryInterval, func(attempt int) bool {
+		logger.Debugf("probing instance for readiness, attempt %d of %d", attempt, p.apiRetries)
+		ret, _, err = p.service.GetInstanceWithContext(ctx, &vpcv1.GetInstanceOptions{ID: instance.ID})
+		if err != nil || *ret.Status != "running" {
+			logger.WithError(err).Debugf("readiness attempt failed, state: %s", *ret.Status)
+			return true
 		}
+		logger.Info("instance is running")
+		return false
+	}); err != nil {
+		return nil, err
 	}
-	return nil, errors.New("retry limit exceeded while waiting for instance to become ready")
+	return ret, p.waitForInstanceSSH(ctx, instance, *ret.PrimaryNetworkInterface.PrimaryIpv4Address, sshDialer)
 }
 
 func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Instance, ip string, sshDialer *ssh.AuthDialer) error {
 	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
 		"self": "backend/vpc", "instance": instance.Name, "ip": ip, "username": p.username,
 	})
-	for i := 1; i <= p.sshRetries; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(p.sshRetryInterval):
-			logger.Debugf("probing instance for connectivity, attempt %d of %d", i, p.sshRetries)
-			conn, err := sshDialer.Dial(fmt.Sprintf("%s:22", ip), p.username, time.Second)
-			if err != nil {
-				logger.WithError(err).Debugf("attempt failed")
-				continue
-			}
-
-			if err := conn.Close(); err != nil {
-				logger.WithError(err).Warn("failed to close SSH test connection")
-			}
-			logger.Info("instance is reachable")
-			return nil
+	return retryDo(ctx, p.sshRetries, p.sshRetryInterval, func(attempt int) bool {
+		logger.Debugf("probing instance for connectivity, attempt %d of %d", attempt, p.sshRetries)
+		conn, err := sshDialer.Dial(fmt.Sprintf("%s:22", ip), p.username, time.Second)
+		if err != nil {
+			logger.WithError(err).Debugf("attempt failed")
+			return true
 		}
-	}
-	return errors.New("retry limit exceeded while waiting to SSH into instance")
+		if err := conn.Close(); err != nil {
+			logger.WithError(err).Warn("failed to close SSH test connection")
+		}
+		logger.Info("instance is reachable")
+		return false
+	})
+}
+
+func (p *vpcProvider) retryDeleteSSHKey(ctx goctx.Context, key *vpcv1.Key) error {
+	return nil
 }
 
 func (p *vpcProvider) StartWithProgress(ctx goctx.Context, startAttributes *StartAttributes, _ Progresser) (Instance, error) {
@@ -464,4 +457,18 @@ func (i *vpcInstance) Warmed() bool {
 
 func (i *vpcInstance) SupportsProgress() bool {
 	return false
+}
+
+func retryDo(ctx goctx.Context, retries int, retryInterval time.Duration, fn func(attempt int) bool) error {
+	for i := 1; i <= retries; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryInterval):
+			if !fn(i) {
+				return nil
+			}
+		}
+	}
+	return errors.New("retry limit exceeded")
 }
