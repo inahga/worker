@@ -236,14 +236,14 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 		}
 	}()
 
-	instance, err = p.waitForInstance(ctx, instance, sshDialer)
+	newInstance, err := p.waitForInstance(ctx, instance, sshDialer)
 	if err != nil {
 		return nil, err
 	}
 
 	return &vpcInstance{
 		provider:  p,
-		instance:  instance,
+		instance:  newInstance,
 		sshDialer: sshDialer,
 		sshKey:    key,
 		hostname:  hostname,
