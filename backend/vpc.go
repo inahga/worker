@@ -369,10 +369,11 @@ func (p *vpcProvider) waitForInstance(ctx goctx.Context, instance *vpcv1.Instanc
 	}); err != nil {
 		return nil, err
 	}
-	return ret, p.waitForInstanceSSH(ctx, instance, *ret.PrimaryNetworkInterface.PrimaryIpv4Address, sshDialer)
+	return ret, p.waitForInstanceSSH(ctx, ret, sshDialer)
 }
 
-func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Instance, ip string, sshDialer *ssh.AuthDialer) error {
+func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Instance, sshDialer *ssh.AuthDialer) error {
+	ip := *instance.PrimaryNetworkInterface.PrimaryIpv4Address
 	logger := vpcInstanceLogger(ctx, instance).WithFields(logrus.Fields{"ip": ip, "username": p.username})
 	return retryDo(ctx, p.sshRetries, p.sshRetryInterval, func(attempt int) bool {
 		logger.Debugf("probing instance for connectivity, attempt %d of %d", attempt, p.sshRetries)
