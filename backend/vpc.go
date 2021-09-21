@@ -268,7 +268,7 @@ func (p *vpcProvider) createSSHKey(ctx goctx.Context) (*vpcv1.Key, *ssh.AuthDial
 		ResourceGroup: &vpcv1.ResourceGroupIdentityByID{ID: &p.resourceGroupID},
 	}
 	sshKeyOptions.SetPublicKey(string(publicKey))
-	logger.WithField("key", sshKeyOptions.Name).Debug("creating ssh key")
+	logger.WithField("key", sshKeyOptions.Name).Info("creating ssh key")
 	key, _, err := p.service.CreateKeyWithContext(ctx, sshKeyOptions)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to add ssh key to ibm cloud %w", err)
@@ -283,7 +283,7 @@ func (p *vpcProvider) createInstance(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.
 	if err != nil {
 		return nil, err
 	}
-	logger.WithField("instance", instancePrototype.Name).Debug("creating vpc instance")
+	logger.WithField("instance", instancePrototype.Name).Info("creating vpc instance")
 	instance, _, err := p.service.CreateInstanceWithContext(ctx, &vpcv1.CreateInstanceOptions{
 		InstancePrototype: instancePrototype,
 	})
@@ -358,7 +358,7 @@ func (p *vpcProvider) waitForInstance(ctx goctx.Context, instance *vpcv1.Instanc
 		err error
 	)
 	if err := retryDo(ctx, p.apiRetries, p.sshRetryInterval, func(attempt int) bool {
-		logger.Debugf("probing instance for readiness, attempt %d of %d", attempt, p.apiRetries)
+		logger.Infof("probing instance for readiness, attempt %d of %d", attempt, p.apiRetries)
 		ret, _, err = p.service.GetInstanceWithContext(ctx, &vpcv1.GetInstanceOptions{ID: instance.ID})
 		if err != nil || *ret.Status != "running" {
 			logger.WithError(err).Debugf("readiness attempt failed, state: %s", *ret.Status)
@@ -376,7 +376,7 @@ func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Inst
 	ip := *instance.PrimaryNetworkInterface.PrimaryIpv4Address
 	logger := vpcInstanceLogger(ctx, instance).WithFields(logrus.Fields{"ip": ip, "username": p.username})
 	return retryDo(ctx, p.sshRetries, p.sshRetryInterval, func(attempt int) bool {
-		logger.Debugf("probing instance for connectivity, attempt %d of %d", attempt, p.sshRetries)
+		logger.Infof("probing instance for connectivity, attempt %d of %d", attempt, p.sshRetries)
 		conn, err := sshDialer.Dial(fmt.Sprintf("%s:22", ip), p.username, time.Second)
 		if err != nil {
 			logger.WithError(err).Debug("SSH attempt failed")
