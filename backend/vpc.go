@@ -200,7 +200,7 @@ func newVPCProvider(cfg *config.ProviderConfig) (Provider, error) {
 
 func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, retErr error) {
 	begin := time.Now()
-	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
+	logger := vpcLogger(ctx)
 
 	key, sshDialer, err := p.createSSHKey(ctx)
 	if err != nil {
@@ -246,7 +246,7 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 }
 
 func (p *vpcProvider) createSSHKey(ctx goctx.Context) (*vpcv1.Key, *ssh.AuthDialer, error) {
-	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
+	logger := vpcLogger(ctx)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
@@ -275,7 +275,7 @@ func (p *vpcProvider) createSSHKey(ctx goctx.Context) (*vpcv1.Key, *ssh.AuthDial
 }
 
 func (p *vpcProvider) createInstance(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.Instance, error) {
-	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
+	logger := vpcLogger(ctx)
 	instancePrototype, err := p.getInstancePrototype(ctx, key)
 	if err != nil {
 		return nil, err
@@ -292,7 +292,7 @@ func (p *vpcProvider) createInstance(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.
 }
 
 func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.InstancePrototypeInstanceByImage, error) {
-	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
+	logger := vpcLogger(ctx)
 
 	// Choose random subnet to balance VMs. Ideally multiple subnets are given that
 	// are spread out across availability zones.
@@ -345,9 +345,7 @@ func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*
 // waitForInstance blocks until the instance is fully ready. It also returns an
 // updated instance struct with the latest information.
 func (p *vpcProvider) waitForInstance(ctx goctx.Context, instance *vpcv1.Instance, sshDialer *ssh.AuthDialer) (*vpcv1.Instance, error) {
-	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
-		"self": "backend/vpc", "instance": instance.Name,
-	})
+	logger := vpcInstanceLogger(ctx, instance)
 
 	// Wait for the instance to go into the running state. We need to do this rather
 	// than just waiting for SSH because we don't know the instance's IP address
@@ -372,9 +370,7 @@ func (p *vpcProvider) waitForInstance(ctx goctx.Context, instance *vpcv1.Instanc
 }
 
 func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Instance, ip string, sshDialer *ssh.AuthDialer) error {
-	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
-		"self": "backend/vpc", "instance": instance.Name, "ip": ip, "username": p.username,
-	})
+	logger := vpcInstanceLogger(ctx, instance).WithFields(logrus.Fields{"ip": ip, "username": p.username})
 	return retryDo(ctx, p.sshRetries, p.sshRetryInterval, func(attempt int) bool {
 		logger.Debugf("probing instance for connectivity, attempt %d of %d", attempt, p.sshRetries)
 		conn, err := sshDialer.Dial(fmt.Sprintf("%s:22", ip), p.username, time.Second)
@@ -391,9 +387,7 @@ func (p *vpcProvider) waitForInstanceSSH(ctx goctx.Context, instance *vpcv1.Inst
 }
 
 func (p *vpcProvider) retryDeleteSSHKey(ctx goctx.Context, key *vpcv1.Key) error {
-	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
-		"self": "backend/vpc", "key": key.Name,
-	})
+	logger := vpcLogger(ctx).WithField("key", key.Name)
 	return retryDo(ctx, p.apiRetries, p.apiRetryInterval, func(attempt int) bool {
 		logger.Infof("cleaning up SSH key, attempt %d of %d", attempt, p.apiRetries)
 		if _, err := p.service.DeleteKeyWithContext(ctx, &vpcv1.DeleteKeyOptions{ID: key.ID}); err != nil {
@@ -434,9 +428,7 @@ func (i *vpcInstance) DownloadTrace(ctx goctx.Context) ([]byte, error) {
 }
 
 func (i *vpcInstance) Stop(ctx goctx.Context) error {
-	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
-		"self": "backend/vpc", "instance": i.instance.Name,
-	})
+	logger := vpcInstanceLogger(ctx, i.instance)
 	logger.Info("cleaning up instance")
 	if _, err := i.provider.service.DeleteInstanceWithContext(ctx, &vpcv1.DeleteInstanceOptions{ID: i.instance.ID}); err != nil {
 		return fmt.Errorf("failed to cleanup instance: %w", err)
@@ -450,9 +442,7 @@ func (i *vpcInstance) Stop(ctx goctx.Context) error {
 }
 
 func (i *vpcInstance) waitForInstanceDeleted(ctx goctx.Context) error {
-	logger := context.LoggerFromContext(ctx).WithFields(logrus.Fields{
-		"self": "backend/vpc", "instance": i.instance.Name,
-	})
+	logger := vpcInstanceLogger(ctx, i.instance)
 	return retryDo(ctx, i.provider.apiRetries, i.provider.apiRetryInterval, func(attempt int) bool {
 		logger.Infof("probing instance for deletion, attempt %d of %d", attempt, i.provider.apiRetries)
 		instance, res, err := i.provider.service.GetInstanceWithContext(ctx, &vpcv1.GetInstanceOptions{ID: i.instance.ID})
@@ -499,4 +489,12 @@ func retryDo(ctx goctx.Context, retries int, retryInterval time.Duration, fn fun
 		}
 	}
 	return errors.New("retry limit exceeded")
+}
+
+func vpcLogger(ctx goctx.Context) *logrus.Entry {
+	return context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
+}
+
+func vpcInstanceLogger(ctx goctx.Context, instance *vpcv1.Instance) *logrus.Entry {
+	return vpcLogger(ctx).WithField("instance", instance.Name)
 }
