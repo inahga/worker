@@ -99,11 +99,12 @@ type vpcProvider struct {
 }
 
 type vpcInstance struct {
-	provider  *vpcProvider
-	instance  *vpcv1.Instance
-	sshDialer ssh.Dialer
-	sshKey    *vpcv1.Key
-	hostname  string
+	provider    *vpcProvider
+	instance    *vpcv1.Instance
+	sshDialer   ssh.Dialer
+	sshKey      *vpcv1.Key
+	hostname    string
+	startupTime time.Duration
 }
 
 func newVPCProvider(cfg *config.ProviderConfig) (Provider, error) {
@@ -199,6 +200,7 @@ func newVPCProvider(cfg *config.ProviderConfig) (Provider, error) {
 }
 
 func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, retErr error) {
+	begin := time.Now()
 	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
 	hostname := hostnameFromContext(ctx)
 
@@ -234,13 +236,15 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 	if err != nil {
 		return nil, err
 	}
+	end := time.Now()
 
 	return &vpcInstance{
-		provider:  p,
-		instance:  newInstance,
-		sshDialer: sshDialer,
-		sshKey:    key,
-		hostname:  hostname,
+		provider:    p,
+		instance:    newInstance,
+		sshDialer:   sshDialer,
+		sshKey:      key,
+		hostname:    hostname,
+		startupTime: end.Sub(begin),
 	}, nil
 }
 
@@ -465,8 +469,7 @@ func (i *vpcInstance) waitForInstanceDeleted(ctx goctx.Context) error {
 }
 
 func (i *vpcInstance) StartupDuration() time.Duration {
-	// TODO
-	return 0
+	return i.startupTime
 }
 
 func (i *vpcInstance) ID() string {
