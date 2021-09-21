@@ -295,22 +295,10 @@ func (p *vpcProvider) createInstance(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.
 }
 
 func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*vpcv1.InstancePrototypeInstanceByImage, error) {
-	logger := vpcLogger(ctx)
-
-	// Choose random subnet to balance VMs. Ideally multiple subnets are given that
-	// are spread out across availability zones.
-	subnetID := p.subnetIDs[mathrand.Int()%len(p.subnetIDs)]
-
-	// Get the zone from the subnet, because this SDK requires we specify zone even
-	// if it can be inferred by subnet.
-	logger.WithField("id", subnetID).Debug("getting subnet details")
-	subnet, _, err := p.service.GetSubnetWithContext(ctx, p.service.NewGetSubnetOptions(subnetID))
+	subnet, err := p.getSubnet(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get subnet details: %w", err)
+		return nil, err
 	}
-	logger.WithField("subnet", subnet).Debug("got subnet details")
-
-	// TODO: check if the availability zone is ready, and choose another subnet if not.
 
 	userDataBuffer := bytes.Buffer{}
 	if err := vpcStartupScript.Execute(&userDataBuffer, struct{ PublicKey, UserData string }{
@@ -330,7 +318,7 @@ func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*
 		Image:         &vpcv1.ImageIdentityByID{ID: &p.defaultImageID},
 		PrimaryNetworkInterface: &vpcv1.NetworkInterfacePrototype{
 			SecurityGroups: []vpcv1.SecurityGroupIdentityIntf{},
-			Subnet:         &vpcv1.SubnetIdentityByID{ID: &subnetID},
+			Subnet:         &vpcv1.SubnetIdentityByID{ID: subnet.ID},
 		},
 		Zone: &vpcv1.ZoneIdentityByName{Name: subnet.Zone.Name},
 	}
@@ -343,6 +331,41 @@ func (p *vpcProvider) getInstancePrototype(ctx goctx.Context, key *vpcv1.Key) (*
 		)
 	}
 	return instancePrototype, nil
+}
+
+func (p *vpcProvider) getSubnet(ctx goctx.Context) (*vpcv1.Subnet, error) {
+	logger := vpcLogger(ctx)
+
+	// Randomize the subnets so that we get a somewhat even distribution across them.
+	// Ideally the available subnets are each in different zones.
+	subnets := append([]string{}, p.subnetIDs...)
+	mathrand.Shuffle(len(subnets), func(i, j int) { subnets[i], subnets[j] = subnets[j], subnets[i] })
+
+	// Choose a subnet only if the zone it's not unavailable. This technique avoids
+	// excessive requeues during a zone outage.
+	for _, subnetID := range subnets {
+		logger.WithField("subnetID", subnetID).Debug("getting subnet details")
+		subnet, _, err := p.service.GetSubnetWithContext(ctx, p.service.NewGetSubnetOptions(subnetID))
+		if err != nil {
+			logger.WithField("subnetID", subnetID).WithError(err).Error("failed to get subnet details")
+			continue
+		}
+		logger.WithField("subnetID", subnetID).Debug("got subnet details")
+
+		zoneName := *subnet.Zone.Name
+		logger.WithField("zone", zoneName).Debug("getting zone details")
+		zone, _, err := p.service.GetRegionZoneWithContext(ctx, p.service.NewGetRegionZoneOptions(p.region, zoneName))
+		if err != nil {
+			logger.WithField("zone", zoneName).WithError(err).Error("failed to get zone details")
+			continue
+		}
+		logger.WithField("zone", zoneName).Debug("got zone details")
+
+		if *zone.Status != vpcv1.ZoneStatusUnavailableConst {
+			return subnet, nil
+		}
+	}
+	return nil, fmt.Errorf("no subnets in available zones")
 }
 
 // waitForInstance blocks until the instance is fully ready. It also returns an
