@@ -470,13 +470,11 @@ func (i *vpcInstance) StartupDuration() time.Duration {
 }
 
 func (i *vpcInstance) ID() string {
-	// TODO
-	return ""
+	return *i.instance.Name
 }
 
 func (i *vpcInstance) ImageName() string {
-	// TODO
-	return ""
+	return *i.instance.Image.Name
 }
 
 func (i *vpcInstance) Warmed() bool {
