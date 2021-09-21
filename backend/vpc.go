@@ -103,7 +103,6 @@ type vpcInstance struct {
 	instance    *vpcv1.Instance
 	sshDialer   ssh.Dialer
 	sshKey      *vpcv1.Key
-	hostname    string
 	startupTime time.Duration
 }
 
@@ -202,7 +201,6 @@ func newVPCProvider(cfg *config.ProviderConfig) (Provider, error) {
 func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, retErr error) {
 	begin := time.Now()
 	logger := context.LoggerFromContext(ctx).WithField("self", "backend/vpc")
-	hostname := hostnameFromContext(ctx)
 
 	key, sshDialer, err := p.createSSHKey(ctx)
 	if err != nil {
@@ -243,7 +241,6 @@ func (p *vpcProvider) Start(ctx goctx.Context, _ *StartAttributes) (i Instance, 
 		instance:    newInstance,
 		sshDialer:   sshDialer,
 		sshKey:      key,
-		hostname:    hostname,
 		startupTime: end.Sub(begin),
 	}, nil
 }
