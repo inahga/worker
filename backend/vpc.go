@@ -34,6 +34,9 @@ const (
 	defaultVPCAPIRetryInterval = time.Second * 5
 	defaultVPCSSHRetries       = 60
 	defaultVPCSSHRetryInterval = time.Second * 2
+
+	vpcBuildScript = "build.sh"
+	vpcExecCmd     = "bash ~/build.sh"
 )
 
 var (
@@ -413,18 +416,49 @@ func (p *vpcProvider) SupportsProgress() bool {
 }
 
 func (i *vpcInstance) UploadScript(ctx goctx.Context, script []byte) error {
-	// TODO
+	conn, err := i.sshConnection(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to SSH instance: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.UploadFile(vpcBuildScript, script); err != nil {
+		return fmt.Errorf("failed to upload build script: %w", err)
+	}
 	return nil
 }
 
 func (i *vpcInstance) RunScript(ctx goctx.Context, writer io.Writer) (*RunResult, error) {
-	// TODO
-	return &RunResult{Completed: true}, nil
+	conn, err := i.sshConnection(ctx)
+	if err != nil {
+		return &RunResult{Completed: false}, fmt.Errorf("failed to SSH instance: %w", err)
+	}
+	defer conn.Close()
+
+	exitStatus, err := conn.RunCommand(vpcExecCmd, writer)
+	if err != nil {
+		return &RunResult{Completed: false, ExitCode: exitStatus}, fmt.Errorf("failed to run build script: %w", err)
+	}
+	return &RunResult{Completed: true, ExitCode: exitStatus}, nil
 }
 
 func (i *vpcInstance) DownloadTrace(ctx goctx.Context) ([]byte, error) {
-	// TODO
-	return nil, ErrDownloadTraceNotImplemented
+	conn, err := i.sshConnection(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to SSH instance: %w", err)
+	}
+	defer conn.Close()
+
+	buf, err := conn.DownloadFile("/tmp/build.trace")
+	if err != nil {
+		return nil, fmt.Errorf("failed to download trace: %w", err)
+	}
+	return buf, nil
+}
+
+func (i *vpcInstance) sshConnection(ctx goctx.Context) (ssh.Connection, error) {
+	ip := *i.instance.PrimaryNetworkInterface.PrimaryIpv4Address
+	return i.sshDialer.Dial(fmt.Sprintf("%s:22", ip), i.provider.username, time.Second)
 }
 
 func (i *vpcInstance) Stop(ctx goctx.Context) error {
