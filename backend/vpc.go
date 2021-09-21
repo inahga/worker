@@ -373,6 +373,10 @@ func (p *vpcProvider) getSubnet(ctx goctx.Context) (*vpcv1.Subnet, error) {
 func (p *vpcProvider) waitForInstance(ctx goctx.Context, instance *vpcv1.Instance, sshDialer *ssh.AuthDialer) (*vpcv1.Instance, error) {
 	logger := vpcInstanceLogger(ctx, instance)
 
+	// There is no chance that the instance will be ready during this window of
+	// time, so avoid querying the API unnecessarily.
+	<-time.After(time.Second * 45)
+
 	// Wait for the instance to go into the running state. We need to do this rather
 	// than just waiting for SSH because we don't know the instance's IP address
 	// until IBM Cloud considers it ready.
